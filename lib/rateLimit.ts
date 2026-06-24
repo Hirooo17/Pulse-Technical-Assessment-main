@@ -1,13 +1,3 @@
-// In-memory sliding-window rate limiter.
-//
-// IMPORTANT — production limitation: this state lives in the Node.js process
-// and resets on every serverless cold start / worker restart. On Vercel each
-// invocation may hit a different worker, so this only provides lightweight
-// protection against bursts within the same warm instance.
-//
-// For robust distributed rate limiting, swap this for an Upstash Redis store
-// (or similar) using the same interface. That is tracked as a high-priority
-// future improvement in NOTES.md.
 
 interface Window {
   timestamps: number[];

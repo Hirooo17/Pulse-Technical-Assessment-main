@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { Map as MapboxMap, Marker } from "mapbox-gl";
+import type { Map as MapboxMap, Marker, GeoJSONSource } from "mapbox-gl";
 import type { PeerDot } from "@/lib/types";
+import { PULSE_SIGNALS } from "@/lib/types";
 
 const envToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 const TOKEN =
@@ -17,8 +18,6 @@ function dotColor(id: string): string {
   // Use vibrant but distinguishable hues; avoid very dark or very light ones.
   return `hsl(${Math.abs(hash) % 300 + 30}, 80%, 62%)`;
 }
-
-import { PULSE_SIGNALS } from "@/lib/types";
 
 export default function WorldMap({
   peers,
@@ -40,22 +39,21 @@ export default function WorldMap({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
-  const markersRef = useRef<Map<string, Marker>>(new Map());
   const meMarkerRef = useRef<Marker | null>(null);
   const [ready, setReady] = useState(false);
 
   const onPeerClickRef = useRef(onPeerClick);
   const canConnectRef = useRef(canConnect);
+  // Keep refs current on every render so event handlers are always fresh.
   useEffect(() => {
     onPeerClickRef.current = onPeerClick;
     canConnectRef.current = canConnect;
   });
 
-  // Initialise the map once.
+  // ── Initialise the map once ───────────────────────────────────────────────
   useEffect(() => {
     if (!TOKEN || !containerRef.current) return;
     let cancelled = false;
-    const markers = markersRef.current;
 
     (async () => {
       const mapboxgl = (await import("mapbox-gl")).default;
@@ -69,28 +67,119 @@ export default function WorldMap({
         attributionControl: true,
         projection: "globe",
       });
+
       map.on("load", () => {
-        if (!cancelled) {
-          // Subtle atmosphere on the globe
-          if (map.setFog) {
-            map.setFog({
-              color: "#0d0d18",
-              "high-color": "#141428",
-              "horizon-blend": 0.04,
-              "space-color": "#090912",
-              "star-intensity": 0.45,
-            });
-          }
-          setReady(true);
+        if (cancelled) return;
+
+        // Subtle atmosphere on the globe.
+        if (map.setFog) {
+          map.setFog({
+            color: "#0d0d18",
+            "high-color": "#141428",
+            "horizon-blend": 0.04,
+            "space-color": "#090912",
+            "star-intensity": 0.45,
+          });
         }
+
+        // ── Peer dots — GeoJSON + WebGL circle layer ─────────────────────
+        // Using a GeoJSON source + circle layer instead of DOM Markers fixes
+        // the position-drift bug on globe projection. DOM markers are
+        // positioned with CSS transforms that are recalculated each frame and
+        // can lag/drift during zoom on a 3D globe. WebGL layers are always
+        // perfectly synchronised with the globe coordinate system.
+        map.addSource("peers", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+
+        // Main dot circle.
+        map.addLayer({
+          id: "peers-dots",
+          type: "circle",
+          source: "peers",
+          paint: {
+            "circle-radius": 7,
+            "circle-color": ["get", "color"],
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "rgba(255,255,255,0.85)",
+            // Dim busy peers.
+            "circle-opacity": [
+              "case",
+              ["==", ["get", "busy"], true],
+              0.35,
+              1.0,
+            ],
+            "circle-stroke-opacity": [
+              "case",
+              ["==", ["get", "busy"], true],
+              0.35,
+              0.85,
+            ],
+          },
+        });
+
+        // Outer pulse ring — a larger, dimmer circle behind the dot.
+        map.addLayer(
+          {
+            id: "peers-pulse",
+            type: "circle",
+            source: "peers",
+            filter: ["==", ["get", "busy"], false],
+            paint: {
+              "circle-radius": 13,
+              "circle-color": ["get", "color"],
+              "circle-opacity": 0.18,
+              "circle-stroke-width": 0,
+            },
+          },
+          "peers-dots", // insert below the main dot so it renders behind
+        );
+
+        // Signal emoji above each dot (symbol layer).
+        map.addLayer({
+          id: "peers-signals",
+          type: "symbol",
+          source: "peers",
+          filter: ["!=", ["get", "signal"], ""],
+          layout: {
+            "text-field": ["get", "signal"],
+            "text-size": 13,
+            // Offset upward so the emoji sits above the circle.
+            "text-offset": [0, -1.8],
+            "text-allow-overlap": true,
+            "text-ignore-placement": true,
+          },
+        });
+
+        // ── Click / hover interaction ─────────────────────────────────────
+        map.on("click", "peers-dots", (e) => {
+          const feature = e.features?.[0];
+          if (!feature?.properties) return;
+          const { id, busy } = feature.properties as {
+            id: string;
+            busy: boolean;
+          };
+          if (!busy && canConnectRef.current) {
+            onPeerClickRef.current(id);
+          }
+        });
+
+        map.on("mouseenter", "peers-dots", () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", "peers-dots", () => {
+          map.getCanvas().style.cursor = "";
+        });
+
+        setReady(true);
       });
+
       mapRef.current = map;
     })();
 
     return () => {
       cancelled = true;
-      markers.forEach((m) => m.remove());
-      markers.clear();
       meMarkerRef.current?.remove();
       meMarkerRef.current = null;
       mapRef.current?.remove();
@@ -100,7 +189,7 @@ export default function WorldMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // "Me" pin.
+  // ── "Me" pin — keep as a DOM Marker (single element, no drift risk) ───────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !me) return;
@@ -113,6 +202,8 @@ export default function WorldMap({
         const el = document.createElement("div");
         el.className = "pulse-me";
         el.title = "You";
+        // The outer .pulse-me div has no animation — it is the Mapbox anchor
+        // element and must not move independently. The emoji animates inside.
         el.innerHTML = `<span class="pulse-me-label">Me</span><span class="pulse-me-emoji">📍</span>`;
         meMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
           .setLngLat([me.lng, me.lat])
@@ -122,73 +213,35 @@ export default function WorldMap({
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [me, ready]);
 
-  // Peer markers.
+  // ── Sync peer data into the GeoJSON source ────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    let cancelled = false;
 
-    (async () => {
-      const mapboxgl = (await import("mapbox-gl")).default;
-      if (cancelled) return;
-      const markers = markersRef.current;
-      const seen = new Set<string>();
+    const source = map.getSource("peers") as GeoJSONSource | undefined;
+    if (!source) return;
 
-      for (const peer of peers) {
-        seen.add(peer.id);
-        let marker = markers.get(peer.id);
-        if (!marker) {
-          // Wrapper so we can position the emoji overlay absolutely.
-          const wrapper = document.createElement("div");
-          wrapper.style.position = "relative";
-
-          const el = document.createElement("button");
-          el.className = "pulse-dot";
-          el.style.background = dotColor(peer.id);
-          el.addEventListener("click", (e) => {
-            e.stopPropagation();
-            if (canConnectRef.current && !peer.busy) {
-              onPeerClickRef.current(peer.id);
-            }
-          });
-          wrapper.appendChild(el);
-
-          // Signal emoji floats above the dot.
-          const sigEl = document.createElement("span");
-          sigEl.className = "pulse-dot-signal";
-          wrapper.appendChild(sigEl);
-
-          marker = new mapboxgl.Marker({ element: wrapper })
-            .setLngLat([peer.lng, peer.lat])
-            .addTo(map);
-          markers.set(peer.id, marker);
-        }
-        const wrapper = marker.getElement() as HTMLDivElement;
-        const el = wrapper.querySelector("button") as HTMLButtonElement;
-        const sigEl = wrapper.querySelector(".pulse-dot-signal") as HTMLSpanElement;
-
-        const signalLabel = peer.signal ? PULSE_SIGNALS[peer.signal] : null;
-        const titleParts = [
-          peer.busy ? "Busy" : "Tap to connect",
-          signalLabel ? `${peer.signal} ${signalLabel}` : null,
-        ].filter(Boolean);
-        el.title = titleParts.join(" · ");
-        el.style.opacity = peer.busy ? "0.35" : "1";
-        sigEl.textContent = peer.signal ?? "";
-      }
-
-      for (const [id, marker] of markers) {
-        if (!seen.has(id)) {
-          marker.remove();
-          markers.delete(id);
-        }
-      }
-    })();
-
-    return () => { cancelled = true; };
+    source.setData({
+      type: "FeatureCollection",
+      features: peers.map((peer) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: "Point" as const,
+          coordinates: [peer.lng, peer.lat],
+        },
+        properties: {
+          id: peer.id,
+          busy: peer.busy,
+          signal: peer.signal ?? "",
+          color: dotColor(peer.id),
+        },
+      })),
+    });
   }, [peers, ready]);
 
   const connLabel: Record<typeof connState, string> = {

@@ -316,26 +316,39 @@ export default function Home() {
   const inChat = conn.kind === "connecting" || conn.kind === "connected";
 
   return (
-    <main className="fixed inset-0 overflow-hidden">
+    <main className="fixed inset-0 overflow-hidden" style={{ background: "#090912" }}>
       <WorldMap
         peers={peers}
         me={myLocation}
         onPeerClick={requestConnection}
         canConnect={conn.kind === "idle"}
+        onlineCount={peers.length}
+        connState={conn.kind}
       />
 
       {notice && (
-        <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
+        <div
+          className="glass animate-fade-in absolute left-1/2 top-20 z-30 -translate-x-1/2"
+          style={{ padding: "8px 18px", borderRadius: "9999px", fontSize: "13px", color: "rgba(255,255,255,0.8)", whiteSpace: "nowrap" }}
+        >
           {notice}
         </div>
       )}
 
       {conn.kind === "requesting" && (
-        <div className="absolute left-1/2 top-20 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
-          <span>Requesting connection…</span>
+        <div
+          className="glass animate-fade-in absolute left-1/2 top-20 z-30 -translate-x-1/2"
+          style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 8px 8px 16px", borderRadius: "9999px", fontSize: "13px", color: "rgba(255,255,255,0.7)", whiteSpace: "nowrap" }}
+        >
+          <svg className="animate-spin-slow" width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="rgba(52,211,153,0.3)" strokeWidth="3"/>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="#34d399" strokeWidth="3" strokeLinecap="round"/>
+          </svg>
+          <span>Connecting to stranger…</span>
           <button
+            id="cancel-request-btn"
             onClick={cancelRequest}
-            className="rounded-full bg-zinc-700 px-3 py-1 text-xs hover:bg-zinc-600"
+            style={{ padding: "4px 12px", borderRadius: "9999px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)", fontSize: "12px", cursor: "pointer" }}
           >
             Cancel
           </button>
@@ -367,7 +380,10 @@ export default function Home() {
       )}
 
       {video === "requesting" && (
-        <div className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
+        <div
+          className="glass animate-fade-in absolute bottom-24 left-1/2 z-30 -translate-x-1/2"
+          style={{ padding: "8px 18px", borderRadius: "9999px", fontSize: "13px", color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}
+        >
           Waiting for stranger to accept video…
         </div>
       )}

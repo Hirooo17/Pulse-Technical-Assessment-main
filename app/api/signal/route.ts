@@ -1,9 +1,13 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { SignalType } from "@/lib/types";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Enforce a shared ID format across all routes.
+const ID_RE = /^[a-zA-Z0-9_-]{8,64}$/;
 
 const VALID_TYPES: SignalType[] = [
   "request",
@@ -16,16 +20,36 @@ const VALID_TYPES: SignalType[] = [
 ];
 
 const MAX_PAYLOAD = 64 * 1024; // SDP/ICE are small; cap to be safe.
+const MAX_BODY_BYTES = 64 * 1024;
 
 // POST /api/signal — body { fromId, toId, type, payload? }
 // Drops one message into the recipient's mailbox. Also manages the `busy`
 // flag so a user can only be in one connection at a time.
 export async function POST(request: NextRequest) {
-  let body: unknown;
+  // ── Rate limit: max 120 signals per minute per IP ─────────────────────────
+  // (WebRTC signaling involves rapid ICE candidate exchanges — 120/min is
+  // generous for legitimate use and still throttles obvious spam.)
+  const ip = getClientIp(request);
+  if (!checkRateLimit(ip, "signal", 120, 60_000)) {
+    return Response.json({ error: "too many requests" }, { status: 429 });
+  }
+
+  // ── Body size guard ───────────────────────────────────────────────────────
+  let rawText: string;
   try {
-    body = await request.json();
+    rawText = await request.text();
   } catch {
     return Response.json({ error: "invalid body" }, { status: 400 });
+  }
+  if (Buffer.byteLength(rawText, "utf8") > MAX_BODY_BYTES) {
+    return Response.json({ error: "body too large" }, { status: 413 });
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(rawText);
+  } catch {
+    return Response.json({ error: "invalid JSON" }, { status: 400 });
   }
 
   const { fromId, toId, type, payload } = (body ?? {}) as Record<
@@ -33,12 +57,25 @@ export async function POST(request: NextRequest) {
     unknown
   >;
 
-  if (typeof fromId !== "string" || typeof toId !== "string") {
-    return Response.json({ error: "invalid ids" }, { status: 400 });
+  // ── ID validation ─────────────────────────────────────────────────────────
+  if (typeof fromId !== "string" || !ID_RE.test(fromId)) {
+    return Response.json({ error: "invalid fromId" }, { status: 400 });
   }
+  if (typeof toId !== "string" || !ID_RE.test(toId)) {
+    return Response.json({ error: "invalid toId" }, { status: 400 });
+  }
+
+  // ── Self-signal guard ─────────────────────────────────────────────────────
+  if (fromId === toId) {
+    return Response.json({ error: "cannot signal self" }, { status: 400 });
+  }
+
+  // ── Type validation ───────────────────────────────────────────────────────
   if (typeof type !== "string" || !VALID_TYPES.includes(type as SignalType)) {
     return Response.json({ error: "invalid type" }, { status: 400 });
   }
+
+  // ── Payload validation ────────────────────────────────────────────────────
   if (
     payload !== undefined &&
     payload !== null &&
@@ -49,6 +86,19 @@ export async function POST(request: NextRequest) {
 
   const signalType = type as SignalType;
   const payloadStr = typeof payload === "string" ? payload : null;
+
+  // ── Sender existence check (partial spoofing guard) ───────────────────────
+  // Verify the fromId actually exists in presence before accepting the signal.
+  // This prevents a ghost client from injecting signals as an offline user.
+  // Note: this is not a cryptographic proof — a client could still claim
+  // another active user's ID. Full auth tokens would be the next step.
+  const senderExists = await prisma.presence.findUnique({
+    where: { id: fromId },
+    select: { id: true },
+  });
+  if (!senderExists) {
+    return Response.json({ error: "sender not online" }, { status: 403 });
+  }
 
   // Enforce "one active connection at a time": if the target is already busy,
   // auto-decline the request instead of delivering it.

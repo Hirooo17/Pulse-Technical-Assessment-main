@@ -18,6 +18,8 @@ function dotColor(id: string): string {
   return `hsl(${Math.abs(hash) % 300 + 30}, 80%, 62%)`;
 }
 
+import { PULSE_SIGNALS } from "@/lib/types";
+
 export default function WorldMap({
   peers,
   me,
@@ -25,6 +27,7 @@ export default function WorldMap({
   canConnect,
   onlineCount,
   connState,
+  mySignal,
 }: {
   peers: PeerDot[];
   me: { lat: number; lng: number } | null;
@@ -32,6 +35,8 @@ export default function WorldMap({
   canConnect: boolean;
   onlineCount: number;
   connState: "idle" | "requesting" | "incoming" | "connecting" | "connected";
+  /** The current user's selected Pulse Signal emoji (for display in header). */
+  mySignal: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
@@ -136,24 +141,43 @@ export default function WorldMap({
         seen.add(peer.id);
         let marker = markers.get(peer.id);
         if (!marker) {
+          // Wrapper so we can position the emoji overlay absolutely.
+          const wrapper = document.createElement("div");
+          wrapper.style.position = "relative";
+
           const el = document.createElement("button");
           el.className = "pulse-dot";
           el.style.background = dotColor(peer.id);
-          el.title = peer.busy ? "Busy" : "Tap to connect";
           el.addEventListener("click", (e) => {
             e.stopPropagation();
             if (canConnectRef.current && !peer.busy) {
               onPeerClickRef.current(peer.id);
             }
           });
-          marker = new mapboxgl.Marker({ element: el })
+          wrapper.appendChild(el);
+
+          // Signal emoji floats above the dot.
+          const sigEl = document.createElement("span");
+          sigEl.className = "pulse-dot-signal";
+          wrapper.appendChild(sigEl);
+
+          marker = new mapboxgl.Marker({ element: wrapper })
             .setLngLat([peer.lng, peer.lat])
             .addTo(map);
           markers.set(peer.id, marker);
         }
-        const el = marker.getElement() as HTMLButtonElement;
+        const wrapper = marker.getElement() as HTMLDivElement;
+        const el = wrapper.querySelector("button") as HTMLButtonElement;
+        const sigEl = wrapper.querySelector(".pulse-dot-signal") as HTMLSpanElement;
+
+        const signalLabel = peer.signal ? PULSE_SIGNALS[peer.signal] : null;
+        const titleParts = [
+          peer.busy ? "Busy" : "Tap to connect",
+          signalLabel ? `${peer.signal} ${signalLabel}` : null,
+        ].filter(Boolean);
+        el.title = titleParts.join(" · ");
         el.style.opacity = peer.busy ? "0.35" : "1";
-        el.title = peer.busy ? "Busy" : "Tap to connect";
+        sigEl.textContent = peer.signal ?? "";
       }
 
       for (const [id, marker] of markers) {
@@ -235,6 +259,18 @@ export default function WorldMap({
             <span className="status-dot" />
             <span>{onlineCount} online</span>
           </div>
+          {mySignal && (
+            <div
+              className="status-pill"
+              title={`Your vibe: ${PULSE_SIGNALS[mySignal] ?? mySignal}`}
+              style={{ gap: "4px" }}
+            >
+              <span style={{ fontSize: "14px", lineHeight: 1 }}>{mySignal}</span>
+              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "11px" }}>
+                {PULSE_SIGNALS[mySignal]}
+              </span>
+            </div>
+          )}
           <div
             className="status-pill"
             style={{

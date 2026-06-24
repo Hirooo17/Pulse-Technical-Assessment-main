@@ -54,6 +54,7 @@ export default function ChatPanel({
   messages,
   connected,
   videoBusy,
+  peerSignal,
   onSend,
   onStartVideo,
   onEnd,
@@ -61,6 +62,8 @@ export default function ChatPanel({
   messages: ChatMessage[];
   connected: boolean;
   videoBusy: boolean;
+  /** The peer's selected Pulse Signal emoji (null = none). */
+  peerSignal?: string | null;
   onSend: (text: string) => void;
   onStartVideo: () => void;
   onEnd: () => void;
@@ -102,7 +105,7 @@ export default function ChatPanel({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          {/* Avatar placeholder */}
+          {/* Avatar / signal icon */}
           <div
             style={{
               width: "34px",
@@ -113,10 +116,10 @@ export default function ChatPanel({
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
-              fontSize: "15px",
+              fontSize: peerSignal ? "18px" : "15px",
             }}
           >
-            👤
+            {peerSignal ?? "👤"}
           </div>
           <div>
             <p style={{ fontWeight: 600, fontSize: "14px", color: "#fff" }}>

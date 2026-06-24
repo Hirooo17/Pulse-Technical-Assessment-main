@@ -16,6 +16,7 @@ model Presence {
   lat      Float // ALREADY privacy-offset coords (raw is never stored)
   lng      Float
   busy     Boolean  @default(false) // true while in an active connection
+  signal   String?  @db.VarChar(32) // Pulse Signal emoji — null = no vibe set
   lastSeen DateTime
 
   @@index([lastSeen])

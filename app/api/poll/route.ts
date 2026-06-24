@@ -6,15 +6,23 @@ import type { PollResponse } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Enforce a shared ID format across all routes.
+const ID_RE = /^[a-zA-Z0-9_-]{8,64}$/;
+
 // GET /api/poll?id= — the single endpoint that drives the live map.
 // It (1) heartbeats the caller, (2) reaps stale presence + orphan signals,
 // (3) returns the filtered online peers, and (4) drains this user's mailbox.
+//
+// NOTE: This route is NOT rate-limited because it doubles as the heartbeat
+// mechanism. Every active client calls it every 1.5 s; throttling it would
+// break presence. Protection here is the ID format check only.
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const id = params.get("id");
 
-  if (!id) {
-    return Response.json({ error: "missing id" }, { status: 400 });
+  // ── ID validation ─────────────────────────────────────────────────────────
+  if (!id || !ID_RE.test(id)) {
+    return Response.json({ error: "invalid id" }, { status: 400 });
   }
 
   const now = Date.now();
@@ -32,13 +40,13 @@ export async function GET(request: NextRequest) {
   await prisma.presence.deleteMany({ where: { lastSeen: { lt: staleCutoff } } });
   await prisma.signal.deleteMany({ where: { createdAt: { lt: signalCutoff } } });
 
-  // 3) Online peers, excluding self.
+  // 3) Online peers, excluding self — include the Pulse Signal field.
   const peers = await prisma.presence.findMany({
     where: {
       id: { not: id },
       lastSeen: { gte: staleCutoff },
     },
-    select: { id: true, lat: true, lng: true, busy: true },
+    select: { id: true, lat: true, lng: true, busy: true, signal: true },
   });
 
   // 4) Drain this user's mailbox: read, then delete exactly what we read so a
@@ -59,6 +67,7 @@ export async function GET(request: NextRequest) {
       lat: p.lat,
       lng: p.lng,
       busy: p.busy,
+      signal: p.signal,
     })),
     signals: inbox.map((s) => ({
       id: s.id,

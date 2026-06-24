@@ -6,6 +6,7 @@ import WorldMap from "./components/WorldMap";
 import ConnectionPrompt from "./components/ConnectionPrompt";
 import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
 import VideoPanel from "./components/VideoPanel";
+import SignalSelector from "./components/SignalSelector";
 import { join, leave, poll, sendSignal } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
@@ -33,6 +34,9 @@ export default function Home() {
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(
     null,
   );
+  // Pulse Signal — the user's chosen session vibe.
+  const [mySignal, setMySignal] = useState<string | null>(null);
+  const myLocationRef = useRef<{ lat: number; lng: number } | null>(null);
 
   const [conn, _setConn] = useState<Conn>({ kind: "idle" });
   const connRef = useRef<Conn>(conn);
@@ -305,8 +309,19 @@ export default function Home() {
 
   async function handleReady(lat: number, lng: number) {
     setMyLocation({ lat, lng });
-    await join(sessionId, lat, lng);
+    myLocationRef.current = { lat, lng };
+    await join(sessionId, lat, lng, mySignal ?? undefined);
     setPhase("live");
+  }
+
+  // When the user changes their signal mid-session, re-join to update the
+  // presence row. The upsert is idempotent — no duplicate row is created.
+  async function handleSignalChange(emoji: string | null) {
+    setMySignal(emoji);
+    if (phase === "live" && myLocationRef.current) {
+      const { lat, lng } = myLocationRef.current;
+      await join(sessionId, lat, lng, emoji ?? undefined);
+    }
   }
 
   if (phase === "gate") {
@@ -314,6 +329,13 @@ export default function Home() {
   }
 
   const inChat = conn.kind === "connecting" || conn.kind === "connected";
+
+  // Look up the connected peer's Pulse Signal so we can show it in ChatPanel.
+  const connectedPeerId =
+    conn.kind === "connecting" || conn.kind === "connected" ? conn.peerId : null;
+  const peerSignal = connectedPeerId
+    ? (peers.find((p) => p.id === connectedPeerId)?.signal ?? null)
+    : null;
 
   return (
     <main className="fixed inset-0 overflow-hidden" style={{ background: "#090912" }}>
@@ -324,6 +346,7 @@ export default function Home() {
         canConnect={conn.kind === "idle"}
         onlineCount={peers.length}
         connState={conn.kind}
+        mySignal={mySignal}
       />
 
       {notice && (
@@ -370,6 +393,7 @@ export default function Home() {
           messages={messages}
           connected={conn.kind === "connected"}
           videoBusy={video !== "none"}
+          peerSignal={peerSignal}
           onSend={(text) => {
             peerRef.current?.sendChat(text);
             addMessage(true, text);
@@ -405,6 +429,21 @@ export default function Home() {
           remoteStream={remoteStream}
           onEnd={endVideo}
         />
+      )}
+
+      {/* ── Signal Selector — fixed bottom-centre, always visible ── */}
+      {!inChat && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 20,
+          }}
+        >
+          <SignalSelector value={mySignal} onChange={handleSignalChange} />
+        </div>
       )}
     </main>
   );

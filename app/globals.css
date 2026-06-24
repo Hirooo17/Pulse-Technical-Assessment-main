@@ -63,12 +63,19 @@ html, body {
   position: relative;
   line-height: 1;
   cursor: default;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.7));
+  /* No animation here — this element is the Mapbox anchor point.
+     Any transform/animation on it shifts the pin away from its
+     geographic coordinate when the map scrolls. */
 }
 
 .pulse-me-emoji {
   font-size: 20px;
+  display: block;
   animation: me-bob 3s ease-in-out infinite;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.7));
+  /* The bob is purely visual — it doesn't affect the DOM anchor
+     because Mapbox reads the element's offsetHeight for placement,
+     not a CSS transform. */
 }
 
 .pulse-me-label {
@@ -96,7 +103,7 @@ html, body {
 
 @keyframes me-bob {
   0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-3px); }
+  50%       { transform: translateY(-4px); }
 }
 
 @keyframes fade-in {
